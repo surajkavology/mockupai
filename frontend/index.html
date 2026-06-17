@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MockupAI — Website Mockup Generator</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+
+  <!-- ===== APP SHELL ===== -->
+  <div id="app">
+
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div class="app-logo">
+          <span class="logo-icon">⚡</span>
+          <span class="logo-text">MockupAI</span>
+        </div>
+        <p class="app-tagline">AI-powered website mockups in 60 seconds</p>
+      </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <main class="app-main">
+
+      <!-- FORM PANEL -->
+      <section class="form-panel" id="formPanel">
+        <div class="form-card">
+          <h2 class="form-title">Tell us about your business</h2>
+          <p class="form-subtitle">Fill in the details below and we'll generate a complete website mockup with real content — instantly.</p>
+
+          <form id="briefForm" novalidate>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="businessName">Business Name <span class="req">*</span></label>
+                <input type="text" id="businessName" placeholder="e.g. Zephyr Coffee Co." required />
+              </div>
+              <div class="form-group">
+                <label for="industry">Industry <span class="req">*</span></label>
+                <select id="industry" required>
+                  <option value="" disabled selected>Select industry</option>
+                  <option>Food & Beverage</option>
+                  <option>Technology & SaaS</option>
+                  <option>Healthcare</option>
+                  <option>Education & E-Learning</option>
+                  <option>Finance & Fintech</option>
+                  <option>Fashion & Apparel</option>
+                  <option>Real Estate</option>
+                  <option>Travel & Hospitality</option>
+                  <option>Fitness & Wellness</option>
+                  <option>E-Commerce & Retail</option>
+                  <option>Creative & Design Agency</option>
+                  <option>Consulting & Professional Services</option>
+                  <option>Non-Profit & Social Impact</option>
+                  <option>Gaming & Entertainment</option>
+                  <option>Other</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="description">Business Description <span class="req">*</span></label>
+              <textarea id="description" rows="3" placeholder="What does your business do? What makes it unique?" required></textarea>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="audience">Target Audience</label>
+                <input type="text" id="audience" placeholder="e.g. Remote workers aged 25–40" />
+              </div>
+              <div class="form-group">
+                <label for="goal">Primary Goal</label>
+                <input type="text" id="goal" placeholder="e.g. Drive app sign-ups" />
+              </div>
+            </div>
+
+            <div class="form-group color-group">
+              <label for="brandColor">Brand Color</label>
+              <div class="color-input-wrap">
+                <input type="color" id="brandColor" value="#6366f1" />
+                <span id="colorHex">#6366f1</span>
+                <div class="color-presets">
+                  <button type="button" class="preset" style="background:#6366f1" data-color="#6366f1"></button>
+                  <button type="button" class="preset" style="background:#0ea5e9" data-color="#0ea5e9"></button>
+                  <button type="button" class="preset" style="background:#10b981" data-color="#10b981"></button>
+                  <button type="button" class="preset" style="background:#f59e0b" data-color="#f59e0b"></button>
+                  <button type="button" class="preset" style="background:#ef4444" data-color="#ef4444"></button>
+                  <button type="button" class="preset" style="background:#8b5cf6" data-color="#8b5cf6"></button>
+                  <button type="button" class="preset" style="background:#ec4899" data-color="#ec4899"></button>
+                  <button type="button" class="preset" style="background:#14b8a6" data-color="#14b8a6"></button>
+                </div>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-generate" id="generateBtn">
+              <span class="btn-text">Generate Mockup</span>
+              <span class="btn-loader" hidden>
+                <span class="spinner"></span> Generating...
+              </span>
+            </button>
+
+          </form>
+        </div>
+
+        <!-- HOW IT WORKS -->
+        <div class="how-it-works">
+          <h3>How it works</h3>
+          <ol>
+            <li><strong>Fill the brief</strong> — business name, industry, description</li>
+            <li><strong>AI generates</strong> — Claude crafts real copy &amp; structure</li>
+            <li><strong>Preview &amp; export</strong> — download as PDF instantly</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- RESULT PANEL -->
+      <section class="result-panel" id="resultPanel" hidden>
+        <div class="result-toolbar">
+          <button class="btn-back" id="backBtn">← New Mockup</button>
+          <div class="result-actions">
+            <button class="btn-pdf" id="downloadPdfBtn">⬇ Download PDF</button>
+          </div>
+        </div>
+
+        <!-- MOCKUP PREVIEW -->
+        <div class="mockup-wrapper" id="mockupWrapper">
+          <div class="mockup-browser-chrome">
+            <div class="browser-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="browser-url" id="browserUrl">yourwebsite.com</div>
+          </div>
+          <div class="mockup-content" id="mockupContent">
+            <!-- Dynamically injected -->
+          </div>
+        </div>
+
+        <!-- COLOR PALETTE STRIP -->
+        <div class="palette-strip" id="paletteStrip"></div>
+
+        <!-- SEO META PREVIEW -->
+        <div class="seo-preview" id="seoPreview"></div>
+
+      </section>
+
+    </main>
+
+    <!-- LOADING OVERLAY -->
+    <div class="loading-overlay" id="loadingOverlay" hidden>
+      <div class="loading-card">
+        <div class="loading-ring"></div>
+        <p class="loading-text" id="loadingText">Analyzing your brief...</p>
+        <p class="loading-sub">Claude is crafting your mockup</p>
+      </div>
+    </div>
+
+    <!-- ERROR TOAST -->
+    <div class="toast" id="toast" hidden></div>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
