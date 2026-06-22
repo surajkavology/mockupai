@@ -1,61 +1,79 @@
-const BACKEND_URL = 'http://localhost:3001';
+/* =============================================================
+   MockupAI — script.js
+   Main application controller
+   Coordinates: form → API → CodeGenerator → PreviewManager
+   ============================================================= */
 
-// DOM refs
-const form = document.getElementById('briefForm');
-const generateBtn = document.getElementById('generateBtn');
-const btnText = generateBtn.querySelector('.btn-text');
-const btnLoader = generateBtn.querySelector('.btn-loader');
-const formPanel = document.getElementById('formPanel');
-const resultPanel = document.getElementById('resultPanel');
-const mockupContent = document.getElementById('mockupContent');
+/* In production (Railway) the frontend is served by the same server,
+   so API calls are relative. Locally, point to the dev backend. */
+const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3001'
+  : '';
+
+/* ----------------------------------------------------------
+   DOM References
+---------------------------------------------------------- */
+const form           = document.getElementById('briefForm');
+const generateBtn    = document.getElementById('generateBtn');
+const btnText        = generateBtn.querySelector('.btn-text');
+const btnLoader      = generateBtn.querySelector('.btn-loader');
+const formPanel      = document.getElementById('formPanel');
+const resultPanel    = document.getElementById('resultPanel');
 const loadingOverlay = document.getElementById('loadingOverlay');
-const loadingText = document.getElementById('loadingText');
-const backBtn = document.getElementById('backBtn');
+const loadingText    = document.getElementById('loadingText');
+const backBtn        = document.getElementById('backBtn');
 const downloadPdfBtn = document.getElementById('downloadPdfBtn');
-const brandColorInput = document.getElementById('brandColor');
-const colorHex = document.getElementById('colorHex');
-const browserUrl = document.getElementById('browserUrl');
+const exportZipBtn   = document.getElementById('exportZipBtn');
+const brandColorInput= document.getElementById('brandColor');
+const colorHex       = document.getElementById('colorHex');
+const browserUrl     = document.getElementById('browserUrl');
 
-// Loading messages rotation
+/* State — holds last generated data & code */
+let _lastData      = null;
+let _lastGenerated = null;
+
+/* ----------------------------------------------------------
+   Loading message rotation
+---------------------------------------------------------- */
 const loadingMessages = [
   'Analyzing your brief...',
   'Crafting your brand story...',
-  'Designing the structure...',
   'Writing compelling copy...',
-  'Selecting the perfect palette...',
-  'Finalizing your mockup...',
+  'Designing the palette...',
+  'Generating your mockup...',
+  'Almost there...',
 ];
-let loadingInterval;
+let _loadingInterval;
 
-function startLoadingMessages() {
+function startLoading() {
   let i = 0;
   loadingText.textContent = loadingMessages[0];
-  loadingInterval = setInterval(() => {
+  _loadingInterval = setInterval(() => {
     i = (i + 1) % loadingMessages.length;
     loadingText.textContent = loadingMessages[i];
   }, 1800);
 }
-function stopLoadingMessages() {
-  clearInterval(loadingInterval);
-}
+function stopLoading() { clearInterval(_loadingInterval); }
 
-// Color picker sync
+/* ----------------------------------------------------------
+   Color picker sync
+---------------------------------------------------------- */
 brandColorInput.addEventListener('input', () => {
   colorHex.textContent = brandColorInput.value;
   document.querySelectorAll('.preset').forEach(p => p.classList.remove('active'));
 });
-
 document.querySelectorAll('.preset').forEach(btn => {
   btn.addEventListener('click', () => {
-    const color = btn.dataset.color;
-    brandColorInput.value = color;
-    colorHex.textContent = color;
+    brandColorInput.value = btn.dataset.color;
+    colorHex.textContent  = btn.dataset.color;
     document.querySelectorAll('.preset').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
   });
 });
 
-// Toast
+/* ----------------------------------------------------------
+   Toast notifications
+---------------------------------------------------------- */
 function showToast(msg, duration = 4000) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -63,28 +81,30 @@ function showToast(msg, duration = 4000) {
   setTimeout(() => { toast.hidden = true; }, duration);
 }
 
-// Form submit
+/* ----------------------------------------------------------
+   FORM SUBMIT → Generate mockup
+---------------------------------------------------------- */
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const businessName = document.getElementById('businessName').value.trim();
-  const industry = document.getElementById('industry').value;
-  const description = document.getElementById('description').value.trim();
-  const audience = document.getElementById('audience').value.trim();
-  const goal = document.getElementById('goal').value.trim();
-  const brandColor = brandColorInput.value;
+  const industry     = document.getElementById('industry').value;
+  const description  = document.getElementById('description').value.trim();
+  const audience     = document.getElementById('audience').value.trim();
+  const goal         = document.getElementById('goal').value.trim();
+  const brandColor   = brandColorInput.value;
 
   if (!businessName || !industry || !description) {
     showToast('Please fill in Business Name, Industry, and Description.');
     return;
   }
 
-  // Show loading
+  /* Show loading state */
   loadingOverlay.hidden = false;
-  generateBtn.disabled = true;
-  btnText.hidden = true;
-  btnLoader.hidden = false;
-  startLoadingMessages();
+  generateBtn.disabled  = true;
+  btnText.hidden        = true;
+  btnLoader.hidden      = false;
+  startLoading();
 
   try {
     const res = await fetch(`${BACKEND_URL}/generate`, {
@@ -99,224 +119,147 @@ form.addEventListener('submit', async (e) => {
     }
 
     const { data } = await res.json();
-    renderMockup(data);
 
-    formPanel.hidden = true;
+    /* Generate clean HTML/CSS/JS from the AI data */
+    const generated = CodeGenerator.generate(data);
+
+    /* Render everything (validator will update _lastData/_lastGenerated with repaired versions) */
+    await renderResult(data, generated);
+
+    /* Switch to result view */
+    formPanel.hidden   = false;
     resultPanel.hidden = false;
+    formPanel.hidden   = true;
     resultPanel.scrollIntoView({ behavior: 'smooth' });
 
   } catch (err) {
     showToast(`Error: ${err.message}`);
   } finally {
+    loadingOverlay.hidden = false;
     loadingOverlay.hidden = true;
-    generateBtn.disabled = false;
-    btnText.hidden = false;
-    btnLoader.hidden = true;
-    stopLoadingMessages();
+    generateBtn.disabled  = false;
+    btnText.hidden        = false;
+    btnLoader.hidden      = true;
+    stopLoading();
   }
 });
 
-// Back button
+/* ----------------------------------------------------------
+   Render result — three-pass validation then loads preview
+---------------------------------------------------------- */
+async function renderResult(data, generated) {
+  /* PASS 1 — repair JSON data */
+  const { data: safeData, warnings: dataWarnings } = LayoutValidator.validateData(data);
+
+  /* Update globals with repaired data so export uses clean version */
+  _lastData      = safeData;
+  _lastGenerated = CodeGenerator.generate(safeData);
+
+  /* PASS 2 — generate HTML then repair the string */
+  const rawHtml = CodeGenerator.generatePreviewHTML(safeData);
+  const { html: safeHtml, warnings: htmlWarnings } = LayoutValidator.validateHTML(rawHtml);
+
+  /* Update browser URL bar */
+  browserUrl.textContent = safeData.businessName.toLowerCase().replace(/\s+/g, '') + '.com';
+
+  /* Load repaired HTML into iframe */
+  PreviewManager.load(safeHtml);
+
+  /* Render meta panels */
+  renderPalette(safeData.colorPalette);
+  renderSEO(safeData);
+  renderDesignPanel(safeData);
+
+  /* PASS 3 — audit live iframe DOM after paint */
+  const iframe = document.getElementById('previewFrame');
+  const iframeWarnings = await LayoutValidator.validateIframe(iframe);
+
+  /* Show unified warnings panel */
+  LayoutValidator.showWarnings([...dataWarnings, ...htmlWarnings, ...iframeWarnings]);
+}
+
+/* ----------------------------------------------------------
+   Back button
+---------------------------------------------------------- */
 backBtn.addEventListener('click', () => {
   resultPanel.hidden = true;
-  formPanel.hidden = false;
+  formPanel.hidden   = false;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
-// PDF Download
-downloadPdfBtn.addEventListener('click', () => {
-  const element = document.getElementById('mockupWrapper');
-  const opt = {
-    margin: 0,
-    filename: `MockupAI-${Date.now()}.pdf`,
-    image: { type: 'jpeg', quality: 0.97 },
-    html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-  };
-  downloadPdfBtn.textContent = 'Preparing PDF...';
-  downloadPdfBtn.disabled = true;
+/* ----------------------------------------------------------
+   PDF Download
+---------------------------------------------------------- */
+downloadPdfBtn.addEventListener('click', async () => {
+  if (!_lastData) return;
 
-  // Capture full mockup (remove max-height for PDF)
-  const mc = document.getElementById('mockupContent');
-  const prevMaxH = mc.style.maxHeight;
-  mc.style.maxHeight = 'none';
+  downloadPdfBtn.textContent = 'Preparing...';
+  downloadPdfBtn.disabled    = true;
 
-  html2pdf().set(opt).from(element).save().then(() => {
-    mc.style.maxHeight = prevMaxH;
-    downloadPdfBtn.textContent = '⬇ Download PDF';
-    downloadPdfBtn.disabled = false;
-  });
+  try {
+    const frame = document.getElementById('previewFrame');
+    const previewHtml = CodeGenerator.generatePreviewHTML(_lastData);
+
+    /* Use html2pdf on a hidden clone */
+    const container = document.createElement('div');
+    container.innerHTML = previewHtml;
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:1440px;';
+    document.body.appendChild(container);
+
+    const opt = {
+      margin: 0,
+      filename: `MockupAI-${_lastData.businessName.replace(/\s+/g, '-')}.pdf`,
+      image: { type: 'jpeg', quality: 0.97 },
+      html2canvas: { scale: 1.5, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    };
+
+    /* Dynamically load html2pdf if not present */
+    if (typeof html2pdf === 'undefined') {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+    }
+
+    await html2pdf().set(opt).from(container).save();
+    document.body.removeChild(container);
+  } catch (err) {
+    showToast('PDF generation failed. Try again.');
+  } finally {
+    downloadPdfBtn.textContent = '⬇ PDF';
+    downloadPdfBtn.disabled    = false;
+  }
 });
 
-// ===== RENDER MOCKUP =====
-function renderMockup(d) {
-  const p = d.colorPalette;
-  const primary = p.primary || d.brandColor || '#6366f1';
-  const secondary = p.secondary || '#818cf8';
-  const accent = p.accent || '#f59e0b';
-  const dark = p.dark || '#312e81';
-  const light = p.light || '#e0e7ff';
+/* ----------------------------------------------------------
+   Export ZIP
+---------------------------------------------------------- */
+exportZipBtn.addEventListener('click', async () => {
+  if (!_lastData || !_lastGenerated) return;
 
-  // Update browser URL bar
-  browserUrl.textContent = d.businessName.toLowerCase().replace(/\s+/g, '') + '.com';
+  exportZipBtn.disabled    = true;
+  exportZipBtn.textContent = 'Zipping...';
 
-  mockupContent.innerHTML = `
-    ${renderNavbar(d, primary, dark)}
-    ${renderHero(d, primary, dark)}
-    ${renderFeatures(d, primary, light)}
-    ${renderAbout(d, primary, light, accent)}
-    ${renderTestimonials(d, primary, light)}
-    ${renderContact(d, primary, accent)}
-    ${renderFooter(d, dark, primary)}
-  `;
+  try {
+    await DownloadZip.download(_lastData, _lastGenerated);
+  } catch (err) {
+    showToast('Export failed: ' + err.message);
+  } finally {
+    exportZipBtn.disabled     = false;
+    exportZipBtn.innerHTML    = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export ZIP`;
+  }
+});
 
-  renderPalette(p);
-  renderSEO(d);
-}
-
-function renderNavbar(d, primary, dark) {
-  const links = d.navbar.links.map(l =>
-    `<li><a href="#">${l}</a></li>`
-  ).join('');
-  return `
-    <nav class="m-navbar" style="background:${dark};">
-      <div class="m-nav-logo">${d.navbar.logo}</div>
-      <ul class="m-nav-links">${links}</ul>
-      <a class="m-nav-cta" href="#" style="background:${primary};">${d.hero.ctaPrimary}</a>
-    </nav>
-  `;
-}
-
-function renderHero(d, primary, dark) {
-  return `
-    <section class="m-hero" style="background:linear-gradient(135deg, ${dark} 0%, ${primary} 100%);">
-      <div class="m-hero-badge">${d.industry}</div>
-      <h1>${d.hero.headline}</h1>
-      <p>${d.hero.subheadline}</p>
-      <div class="m-hero-actions">
-        <a class="m-btn-primary" href="#">${d.hero.ctaPrimary}</a>
-        <a class="m-btn-secondary" href="#" style="color:${dark};">${d.hero.ctaSecondary}</a>
-      </div>
-    </section>
-  `;
-}
-
-function renderFeatures(d, primary, light) {
-  const cards = d.features.map(f => `
-    <div class="m-feature-card">
-      <div class="m-feature-icon">${f.icon}</div>
-      <h3 style="color:${primary};">${f.title}</h3>
-      <p>${f.description}</p>
-    </div>
-  `).join('');
-  return `
-    <section class="m-features">
-      <p class="m-section-label" style="color:${primary};">What We Offer</p>
-      <h2 class="m-section-heading">Everything You Need to Succeed</h2>
-      <p class="m-section-sub">Powerful features designed to help your business grow faster.</p>
-      <div class="m-features-grid">${cards}</div>
-    </section>
-  `;
-}
-
-function renderAbout(d, primary, light, accent) {
-  return `
-    <section class="m-about">
-      <div class="m-about-img" style="background:${light};">
-        <span style="font-size:5rem;">🏢</span>
-      </div>
-      <div class="m-about-content">
-        <p class="m-section-label" style="color:${primary};">Our Story</p>
-        <h2>${d.about.heading}</h2>
-        <p>${d.about.body}</p>
-        <a class="m-contact-cta" href="#" style="background:${primary};">${d.hero.ctaPrimary}</a>
-        <div class="m-about-stats" style="margin-top:28px;">
-          <div class="m-stat">
-            <strong style="color:${primary};">500+</strong>
-            <span>Happy Clients</span>
-          </div>
-          <div class="m-stat">
-            <strong style="color:${primary};">98%</strong>
-            <span>Satisfaction Rate</span>
-          </div>
-          <div class="m-stat">
-            <strong style="color:${primary};">5★</strong>
-            <span>Average Rating</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderTestimonials(d, primary, light) {
-  const avatarColors = [primary, '#10b981', '#f59e0b'];
-  const cards = d.testimonials.map((t, i) => {
-    const initials = t.name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
-    return `
-      <div class="m-testimonial-card">
-        <div class="m-stars">★★★★★</div>
-        <p>"${t.text}"</p>
-        <div class="m-reviewer">
-          <div class="m-avatar" style="background:${avatarColors[i % 3]};">${initials}</div>
-          <div class="m-reviewer-info">
-            <strong>${t.name}</strong>
-            <span>${t.role}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-  return `
-    <section class="m-testimonials">
-      <p class="m-section-label" style="color:${primary};">Testimonials</p>
-      <h2 class="m-section-heading">What Our Clients Say</h2>
-      <p class="m-section-sub" style="margin-bottom:36px;">Real stories from real customers who transformed their business.</p>
-      <div class="m-testimonials-grid">${cards}</div>
-    </section>
-  `;
-}
-
-function renderContact(d, primary, accent) {
-  return `
-    <section class="m-contact">
-      <p class="m-section-label" style="color:${primary};">Get In Touch</p>
-      <h2>${d.contact.heading}</h2>
-      <p>${d.contact.subtext}</p>
-      <a class="m-contact-cta" href="mailto:${d.contact.email}" style="background:${primary};">Send Us a Message</a>
-      <div class="m-contact-info">
-        <div class="m-contact-item">
-          <span class="m-contact-icon">📧</span>
-          <span>${d.contact.email}</span>
-        </div>
-        <div class="m-contact-item">
-          <span class="m-contact-icon">📞</span>
-          <span>${d.contact.phone}</span>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderFooter(d, dark, primary) {
-  return `
-    <footer class="m-footer" style="background:${dark};">
-      <div class="m-footer-logo">${d.businessName}</div>
-      <div class="m-footer-tagline">${d.footer.tagline}</div>
-      <div class="m-footer-copy">© ${d.footer.year} ${d.businessName}. All rights reserved.</div>
-    </footer>
-  `;
-}
-
+/* ----------------------------------------------------------
+   Meta panel renderers
+---------------------------------------------------------- */
 function renderPalette(p) {
+  if (!p) return;
   const strip = document.getElementById('paletteStrip');
   const swatches = [
-    { color: p.primary, name: 'Primary' },
+    { color: p.primary,   name: 'Primary' },
     { color: p.secondary, name: 'Secondary' },
-    { color: p.accent, name: 'Accent' },
-    { color: p.dark, name: 'Dark' },
-    { color: p.light, name: 'Light' },
+    { color: p.accent,    name: 'Accent' },
+    { color: p.dark,      name: 'Dark' },
+    { color: p.light,     name: 'Light' },
   ];
   strip.innerHTML = `
     <h4>Color Palette</h4>
@@ -326,20 +269,71 @@ function renderPalette(p) {
           <div class="swatch-color" style="background:${s.color};"></div>
           <div class="swatch-name">${s.name}</div>
           <div class="swatch-label">${s.color}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+        </div>`).join('')}
+    </div>`;
 }
 
 function renderSEO(d) {
   const seo = document.getElementById('seoPreview');
+  const slug = d.businessName.toLowerCase().replace(/\s+/g, '');
   seo.innerHTML = `
     <h4>SEO Meta Preview</h4>
     <div class="seo-card">
-      <div class="seo-card-title">${d.seoMeta.title}</div>
-      <div class="seo-card-url">https://www.${d.businessName.toLowerCase().replace(/\s+/g, '')}.com</div>
-      <div class="seo-card-desc">${d.seoMeta.description}</div>
-    </div>
-  `;
+      <div class="seo-card-title">${d.seoMeta?.title || d.businessName}</div>
+      <div class="seo-card-url">https://www.${slug}.com</div>
+      <div class="seo-card-desc">${d.seoMeta?.description || ''}</div>
+    </div>`;
 }
+
+function renderDesignPanel(d) {
+  const panel = document.getElementById('designPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <h4>Design Intelligence</h4>
+    <div class="design-grid">
+      ${d.brandPersonality ? `
+        <div class="design-block">
+          <div class="design-label">Brand Personality</div>
+          <div class="design-val">${d.brandPersonality}</div>
+        </div>` : ''}
+      ${d.typography ? `
+        <div class="design-block">
+          <div class="design-label">Typography</div>
+          <div class="design-val">
+            <strong>${d.typography.heading}</strong> (headings)<br>
+            <strong>${d.typography.body}</strong> (body)
+            <span class="design-note">${d.typography.style || ''}</span>
+          </div>
+        </div>` : ''}
+      ${d.iconStyle ? `
+        <div class="design-block">
+          <div class="design-label">Icon Style</div>
+          <div class="design-val">${d.iconStyle}</div>
+        </div>` : ''}
+      ${d.designNotes ? `
+        <div class="design-block design-block-full">
+          <div class="design-label">Design Notes</div>
+          <div class="design-val">${d.designNotes}</div>
+        </div>` : ''}
+    </div>`;
+}
+
+/* ----------------------------------------------------------
+   Utility — dynamic script loader
+---------------------------------------------------------- */
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload  = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+/* ----------------------------------------------------------
+   Init PreviewManager after DOM ready
+---------------------------------------------------------- */
+document.addEventListener('DOMContentLoaded', () => {
+  PreviewManager.init();
+});
